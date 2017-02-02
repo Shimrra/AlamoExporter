@@ -1,3 +1,9 @@
+# Visual Studio specific files
+*.rc
+*.sdf
+*.sln
+*.suo
+*.vcxproj*
 
 # Compiled Object files
 *.slo
