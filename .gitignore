@@ -1,29 +1,73 @@
+
 # Compiled Object files
 *.slo
 *.lo
 *.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
 
 # Compiled Dynamic libraries
 *.so
 *.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
 
 # Compiled Static libraries
 *.lai
 *.la
 *.a
-*.lib
 
-# Executables
-*.exe
-*.out
-*.app
+# Build dir
+build*
+debug_build
+release_build
+/bin
+/lib
+/install
+
+# Deployment dir
+deployment*
+
+# Qt cache
+CMakeLists.txt.user
+CMakeLists.txt.user.*
+
+# IDE project files
+*.sublime-project
+*.sublime-workspace
+
+# Local config windows
+_configure.bat
+_open-project.bat
+_start-cmake-gui.bat
+_start-cmd.bat
+
+# Local config unix
+.localconfig
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+
+# Grunt intermediate storage (http://gruntjs.com/creating-plugins#storing-task-files)
+.grunt
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons (http://nodejs.org/api/addons.html)
+build/Release
+
+# Dependency directory
+node_modules
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Webstorm IDE
+.idea
