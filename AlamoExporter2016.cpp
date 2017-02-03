@@ -72,7 +72,7 @@ INT_PTR CALLBACK AlamoExporter2016OptionsDlgProc(HWND hWnd,UINT message,WPARAM,L
 
 	switch(message) {
 		case WM_INITDIALOG:
-			imp = (AlamoExporter2016 *)lParam;
+			imp = reinterpret_cast<AlamoExporter2016*>(lParam);
 			CenterWindow(hWnd,GetParent(hWnd));
 			return TRUE;
 
@@ -108,17 +108,16 @@ const TCHAR *AlamoExporter2016::Ext(int /*i*/)
 
 const TCHAR *AlamoExporter2016::LongDesc()
 {
-	return _T("Alamo Object (Petroglyph)");
+	return _T("Alamo Object (Petroglyph/EaW/FoC)");
 }
 	
 const TCHAR *AlamoExporter2016::ShortDesc() 
 {			
-	return _T("Alamo");
+	return _T("Alamo Object");
 }
 
 const TCHAR *AlamoExporter2016::AuthorName()
 {			
-	#pragma message(TODO("Return ASCII Author name"))
 	return _T("Shim");
 }
 
@@ -141,7 +140,6 @@ const TCHAR *AlamoExporter2016::OtherMessage2()
 
 unsigned int AlamoExporter2016::Version()
 {				
-	#pragma message(TODO("Return Version number * 100 (i.e. v3.01 = 301)"))
 	return 100;
 }
 
@@ -159,13 +157,13 @@ BOOL AlamoExporter2016::SupportsOptions(int /*ext*/, DWORD /*options*/)
 
 int	AlamoExporter2016::DoExport(const TCHAR* name, ExpInterface* ei, Interface* ip, BOOL suppressPrompts, DWORD options)
 {
-	if(!suppressPrompts)
+	/*if(!suppressPrompts)
 	{
 		DialogBoxParam(hInstance, 
 				MAKEINTRESOURCE(IDD_PANEL), 
 				GetActiveWindow(), 
 				AlamoExporter2016OptionsDlgProc, (LPARAM)this);	
-	}
+	}*/
 
 	Exporter exporter(name,ei,ip,suppressPrompts,options);
 	
