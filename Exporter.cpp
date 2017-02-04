@@ -1,8 +1,11 @@
 #include "Exporter.h"
 
+#include "Max.h"
+
 #include <iosfwd>
-#include <sstream>
-#include <stdint.h>
+#include <lslights.h>
+#include <Esent.h>
+
 
 Exporter::Exporter(const TCHAR* name, ExpInterface* ei, Interface* ip, BOOL suppressPrompts, DWORD options)
 	: m_name(name)
@@ -19,12 +22,38 @@ Exporter::Exporter(const TCHAR* name, ExpInterface* ei, Interface* ip, BOOL supp
 template <typename T>
 void Exporter::write(const T &value)
 {
-	m_oStream.write(reinterpret_cast<const char*>(&value), sizeof(value));
+	write(value, sizeof(value));
 }
 template <typename T>
 void Exporter::write(const T &value, const size_t &size)
 {
 	m_oStream.write(reinterpret_cast<const char*>(&value), size);
+}
+template <typename T>
+void Exporter::writeAt(const size_t& position, const T& value)
+{
+	writeAt(position, value, sizeof(value));
+}
+template <typename T>
+void Exporter::writeAt(const size_t& position, const T& value, const size_t& size)
+{
+	auto curPos = m_oStream.tellp();
+	m_oStream.seekp(position);
+	write(value, size);
+	m_oStream.seekp(curPos);
+}
+
+void Exporter::writeMatrix(const Matrix3& m)
+{
+	Point3 row;
+	for (int i = 0; i < 3; ++i)
+	{
+		row = m.GetRow(i);
+		write(row.x);
+		write(row.y);
+		write(row.z);
+		write(0.f);
+	}
 }
 
 bool Exporter::exportALO()
@@ -34,39 +63,133 @@ bool Exporter::exportALO()
 	return exportSkeleton() && exportMesh() && exportLight() && exportConnections();
 }
 
+void Exporter::parseSkeleton(INode* node, uint32_t parent)
+{
+	Object *nodeObject = node->GetObjectRef();
+	uint32_t newParentID = m_nodes.size();
+	if(nodeObject)
+	{
+		//Check if this is an object we can use, if not, we don't add it and continue on with the last valid parent
+		if(nodeObject->CanConvertToType(triObjectClassID) || nodeObject->IsSubClassOf(LIGHTSCAPE_LIGHT_CLASS) || nodeObject->IsSubClassOf(BONE_OBJ_CLASSID))
+		{
+			m_nodes.push_back(node);
+		}
+		else
+		{
+			newParentID = parent;
+		}
+	}
+	else
+	{
+		m_nodes.push_back(node);
+	}
+
+	if(newParentID != parent)
+	{
+		write(0x202);
+		write(uint32_t());
+		
+		//Bone name
+		auto boneStart = m_oStream.tellp();
+		write(0x203);
+		write(uint32_t());
+		
+		//Converting the name from wchar_t to regular char*
+		const wchar_t *name;
+		if(!node->GetObjectRef())
+		{
+			name = L"Root";
+		}
+		else
+		{
+			name = node->GetName();
+		}
+		char nameMB[1024];
+		WideCharToMultiByte(CP_ACP, 0, name, -1, nameMB, wcslen(name), nullptr,nullptr);
+		write(nameMB, wcslen(name)+1);
+		writeAt(4+boneStart, static_cast<uint32_t>(m_oStream.tellp()-boneStart-8));
+
+		//Bone Data (v2)
+		write(0x206);
+		write(60);
+		write(parent);
+		write(static_cast<uint32_t>(!node->IsHidden()));
+		//Billboarding TODO
+		write(0);
+
+		//Get TM for node
+		
+		if(!node->GetObjectRef())
+		{
+			writeMatrix(node->GetObjectTM(0));
+		}
+		else
+		{
+			/*Matrix3 matrix(1);
+			Point3 pos = node->GetObjOffsetPos();
+			matrix.PreTranslate(pos);
+			Quat quat = node->GetObjOffsetRot();
+			PreRotateMatrix(matrix, quat);
+			ScaleValue scaleValue = node->GetObjOffsetScale();
+			ApplyScaling(matrix, scaleValue);*/
+			writeMatrix(node->GetObjTMBeforeWSM(0));
+		}
+
+		writeAt(-4+boneStart, static_cast<uint32_t>(m_oStream.tellp()-boneStart)+(1<<31));
+	}
+
+	for (int i=0;i<node->NumberOfChildren();++i)
+	{
+		parseSkeleton(node->GetChildNode(i), newParentID);
+	}
+
+}
+
 bool Exporter::exportSkeleton()
 {
-	uint32_t sizeTotal = 12;
-	std::stringstream data;
-	data << "YoDank";
-	
-	//Skeleton container
+	//Skeleton container with placeholder size
 	write(0x200);
-	write(sizeTotal);
-	//We're doubling memory here, do we really want to do that? TODO
-	std::string dataString(data.str());
-	write(dataString, dataString.size());
+	write(uint32_t());
+	
+	//Bone count container
+	write(0x201);
+	write(uint32_t(128));
+	auto boneCountPosition = m_oStream.tellp();
+	byte emptySpace[128];
+	std::fill(&emptySpace[0], &emptySpace[127], 0);
+	write(emptySpace);
+
+	auto root = m_interface->GetRootNode();
+	parseSkeleton(root, 0xffffffff);
+	writeAt(boneCountPosition, static_cast<uint32_t>(m_nodes.size()));
+	
+	writeAt(4, static_cast<uint32_t>(m_oStream.tellp())-8 + (1<<31));
+	
 	
 	return true;
 }
 
 bool Exporter::exportMesh()
 {
-	unsigned int sizeTotal = 0;
-
 	return true;
 }
 
 bool Exporter::exportLight()
 {
-	unsigned int sizeTotal = 0;
-
 	return true;
 }
 
 bool Exporter::exportConnections()
 {
-	unsigned int sizeTotal = 0;
-
+	write(0x600);
+	write(static_cast<uint32_t>(20+(1<<31)));
+	write(0x601);
+	write(static_cast<uint32_t>(12));
+	write(static_cast<byte>(0x1),1);
+	write(static_cast<byte>(4),1);
+	write(static_cast<uint32_t>(0));
+	write(static_cast<byte>(0x4),1);
+	write(static_cast<byte>(4),1);
+	write(static_cast<uint32_t>(0));
 	return true;
 }
