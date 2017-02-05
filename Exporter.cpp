@@ -5,7 +5,7 @@
 #include <iosfwd>
 #include <lslights.h>
 #include <Esent.h>
-
+#include <modstack.h>
 
 Exporter::Exporter(const TCHAR* name, ExpInterface* ei, Interface* ip, BOOL suppressPrompts, DWORD options)
 	: m_name(name)
@@ -65,10 +65,16 @@ bool Exporter::exportALO()
 
 void Exporter::parseSkeleton(INode* node, uint32_t parent)
 {
-	Object *nodeObject = node->GetObjectRef();
+	auto nodeObject = node->GetObjectRef();
 	uint32_t newParentID = m_nodes.size();
 	if(nodeObject)
 	{
+		while (nodeObject->SuperClassID() == GEN_DERIVOB_CLASS_ID)
+		{
+			auto nodeObjectDer = reinterpret_cast<IDerivedObject *>(nodeObject); 
+			nodeObject = nodeObjectDer->GetObjRef();
+		}
+
 		//Check if this is an object we can use, if not, we don't add it and continue on with the last valid parent
 		if(nodeObject->CanConvertToType(triObjectClassID) || nodeObject->IsSubClassOf(LIGHTSCAPE_LIGHT_CLASS) || nodeObject->IsSubClassOf(BONE_OBJ_CLASSID))
 		{
@@ -106,7 +112,8 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 		}
 		char nameMB[1024];
 		WideCharToMultiByte(CP_ACP, 0, name, -1, nameMB, wcslen(name), nullptr,nullptr);
-		write(nameMB, wcslen(name)+1);
+		write(nameMB, wcslen(name));
+		write(short(0),1);
 		writeAt(4+boneStart, static_cast<uint32_t>(m_oStream.tellp()-boneStart-8));
 
 		//Bone Data (v2)
@@ -132,7 +139,8 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 			PreRotateMatrix(matrix, quat);
 			ScaleValue scaleValue = node->GetObjOffsetScale();
 			ApplyScaling(matrix, scaleValue);*/
-			writeMatrix(node->GetObjTMBeforeWSM(0));
+			writeMatrix(node->GetObjTMBeforeWSM(1));
+			//writeMatrix(node->GetObjectTM(1));
 		}
 
 		writeAt(-4+boneStart, static_cast<uint32_t>(m_oStream.tellp()-boneStart)+(1<<31));
@@ -170,7 +178,18 @@ bool Exporter::exportSkeleton()
 }
 
 bool Exporter::exportMesh()
-{
+{/*
+	for(auto node: m_nodes)
+	{
+		if(!node->IsSubClassOf(LIGHTSCAPE_LIGHT_CLASS) && !node->IsSubClassOf(BONE_OBJ_CLASSID))
+		{
+			
+			while (node->SuperClassID() == GEN_DERIVOB_CLASS_ID)
+			{
+				auto nodeObjectDer = reinterpret_cast<IDerivedObject *>(nodeObject); 
+			}
+		}
+	}*/
 	return true;
 }
 
