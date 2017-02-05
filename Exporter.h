@@ -46,4 +46,5 @@ protected:
 	std::ostream m_oStream;
 
 	std::vector<INode*> m_nodes;
+	std::vector<std::pair<uint32_t,uint32_t>> m_meshIDs;
 };
