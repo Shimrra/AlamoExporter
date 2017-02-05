@@ -13,54 +13,16 @@ Exporter::Exporter(const TCHAR* name, ExpInterface* ei, Interface* ip, BOOL supp
 	, m_interface(ip)
 	, m_suppressPrompts(suppressPrompts)
 	, m_options(options)
-	, m_oStream(&m_fileBuf)
+	, m_writer(&m_fileBuf)
 {
 	m_fileBuf.open(m_name, std::ios::out | std::ios::binary);
-}
-
-
-template <typename T>
-void Exporter::write(const T &value)
-{
-	write(value, sizeof(value));
-}
-template <typename T>
-void Exporter::write(const T &value, const size_t &size)
-{
-	m_oStream.write(reinterpret_cast<const char*>(&value), size);
-}
-template <typename T>
-void Exporter::writeAt(const size_t& position, const T& value)
-{
-	writeAt(position, value, sizeof(value));
-}
-template <typename T>
-void Exporter::writeAt(const size_t& position, const T& value, const size_t& size)
-{
-	auto curPos = m_oStream.tellp();
-	m_oStream.seekp(position);
-	write(value, size);
-	m_oStream.seekp(curPos);
-}
-
-void Exporter::writeMatrix(const Matrix3& m)
-{
-	Point3 row;
-	for (int i = 0; i < 3; ++i)
-	{
-		row = m.GetRow(i);
-		write(row.x);
-		write(row.y);
-		write(row.z);
-		write(0.f);
-	}
 }
 
 bool Exporter::exportALO()
 {
 	if(!m_fileBuf.is_open()) return false;
 
-	return exportSkeleton() && exportMesh() && exportLight() && exportConnections();
+	return exportSkeleton() && exportMesh() && exportLight() && exportConnections() && m_writer.isEmpty();
 }
 
 void Exporter::parseSkeleton(INode* node, uint32_t parent)
@@ -92,15 +54,10 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 
 	if(newParentID != parent)
 	{
-		write(0x202);
-		write(uint32_t());
+		m_writer.beginChunk(0x202);
 		
 		//Bone name
-		auto boneStart = m_oStream.tellp();
-		write(0x203);
-		write(uint32_t());
-		
-		//Converting the name from wchar_t to regular char*
+		m_writer.beginChunk(0x203);
 		const wchar_t *name;
 		if(!node->GetObjectRef())
 		{
@@ -110,40 +67,29 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 		{
 			name = node->GetName();
 		}
-		char nameMB[1024];
-		WideCharToMultiByte(CP_ACP, 0, name, -1, nameMB, wcslen(name), nullptr,nullptr);
-		write(nameMB, wcslen(name));
-		write(short(0),1);
-		writeAt(4+boneStart, static_cast<uint32_t>(m_oStream.tellp()-boneStart-8));
+		m_writer.writeName(name);
+		m_writer.endChunk();
 
 		//Bone Data (v2)
-		write(0x206);
-		write(60);
-		write(parent);
-		write(static_cast<uint32_t>(!node->IsHidden()));
+		m_writer.beginChunk(0x206);
+		m_writer.write(parent);
+		m_writer.write(static_cast<uint32_t>(!node->IsHidden()));
 		//TODO Billboarding TODO
-		write(0);
-
+		m_writer.write(0);
 		//Get TM for node
-		
 		if(!node->GetObjectRef())
 		{
-			writeMatrix(node->GetObjectTM(0));
+			m_writer.writeMatrix(node->GetNodeTM(0));
 		}
 		else
 		{
-			/*Matrix3 matrix(1);
-			Point3 pos = node->GetObjOffsetPos();
-			matrix.PreTranslate(pos);
-			Quat quat = node->GetObjOffsetRot();
-			PreRotateMatrix(matrix, quat);
-			ScaleValue scaleValue = node->GetObjOffsetScale();
-			ApplyScaling(matrix, scaleValue);*/
-			writeMatrix(node->GetObjTMBeforeWSM(1));
-			//writeMatrix(node->GetObjectTM(1));
+			auto nodeTM = node->GetNodeTM(0);
+			auto parentTM = node->GetParentNode()->GetNodeTM(0);
+			//m_writer.writeMatrix(nodeTM*Inverse(parentTM));
+			m_writer.writeMatrix(node->GetObjTMBeforeWSM(0));
 		}
-
-		writeAt(-4+boneStart, static_cast<uint32_t>(m_oStream.tellp()-boneStart)+(1<<31));
+		m_writer.endChunk();
+		m_writer.endChunk();
 	}
 
 	for (int i=0;i<node->NumberOfChildren();++i)
@@ -156,22 +102,19 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 bool Exporter::exportSkeleton()
 {
 	//Skeleton container with placeholder size
-	write(0x200);
-	write(uint32_t());
-	
-	//Bone count container
-	write(0x201);
-	write(uint32_t(128));
-	auto boneCountPosition = m_oStream.tellp();
-	byte emptySpace[128];
-	std::fill(&emptySpace[0], &emptySpace[127], 0);
-	write(emptySpace);
+	m_writer.beginChunk(0x200);
+		
+	//TODO Bone count container correct value TODO
+	m_writer.beginChunk(0x201);
+	auto boneCountPosition = m_writer.tellp();
+	m_writer.fillBytes(128);
+	m_writer.endChunk();
 
 	auto root = m_interface->GetRootNode();
 	parseSkeleton(root, 0xffffffff);
-	writeAt(boneCountPosition, static_cast<uint32_t>(m_nodes.size()));
-	
-	writeAt(4, static_cast<uint32_t>(m_oStream.tellp())-8 + (1<<31));
+	m_writer.writeAt(boneCountPosition, static_cast<uint32_t>(m_nodes.size()));
+
+	m_writer.endChunk();
 	
 	
 	return true;
@@ -184,7 +127,7 @@ bool Exporter::exportMesh()
 	{
 		auto node = m_nodes[i];
 		auto nodeObject = node->GetObjectRef();
-		if(node->IsSubClassOf(LIGHTSCAPE_LIGHT_CLASS) || node->IsSubClassOf(BONE_OBJ_CLASSID))
+		if(nodeObject->IsSubClassOf(LIGHTSCAPE_LIGHT_CLASS) || nodeObject->IsSubClassOf(BONE_OBJ_CLASSID))
 		{
 			continue;
 		}
@@ -207,136 +150,110 @@ bool Exporter::exportMesh()
 		auto mesh = meshObject->GetMesh();
 
 		//Write header for mesh (base+name)
-		write(0x400);
-		auto meshPos = static_cast<uint32_t>(m_oStream.tellp());
-		write(uint32_t());
-		write(0x401);
-		auto name = node->GetName();
-		char nameMB[1024];
-		WideCharToMultiByte(CP_ACP, 0, name, -1, nameMB, wcslen(name), nullptr,nullptr);
-		write(static_cast<uint32_t>(wcslen(name)+1));
-		write(nameMB, wcslen(name));
-		write(short(0),1);
+		m_writer.beginChunk(0x400);
+
+		m_writer.beginChunk(0x401);
+		m_writer.writeName(node->GetName());
+		m_writer.endChunk();
 
 		//Write mesh information
-		write(0x402);
-		write(128);
-		write(1);
+		m_writer.beginChunk(0x402);
+		m_writer.write(1);
 		//TODO Might be local bbox? TODO
 		auto tMatrix = node->GetObjTMBeforeWSM(0);
 		auto bbox = mesh.getBoundingBox(&tMatrix);
 		meshObject->GetWorldBoundBox(0, node, &m_interface->GetActiveViewExp(), bbox);
-		write(bbox.Min().x);
-		write(bbox.Min().y);
-		write(bbox.Min().z);
-		write(bbox.Max().x);
-		write(bbox.Max().y);
-		write(bbox.Max().z);
-		write(0);
-		write(static_cast<uint32_t>(node->IsHidden()));
+		m_writer.write(bbox.Min().x);
+		m_writer.write(bbox.Min().y);
+		m_writer.write(bbox.Min().z);
+		m_writer.write(bbox.Max().x);
+		m_writer.write(bbox.Max().y);
+		m_writer.write(bbox.Max().z);
+		m_writer.write(0);
+		m_writer.write(static_cast<uint32_t>(node->IsHidden()));
 		//TODO CollisionEnabled TODO
-		write(0);
-		byte emptySpace[88];
-		std::fill(&emptySpace[0], &emptySpace[87], 0);
-		write(emptySpace);
+		m_writer.write(0);
+		m_writer.fillBytes(88);
+		m_writer.endChunk();
 
 		//TODO Write sub-mesh material information TODO
-		write(0x10100);
-		write(static_cast<uint32_t>(21+(1<<31)));
-		write(0x10101);
-		write(13);
-		write("alDefault.fx", 12);
-		write(short(0),1);
+		m_writer.beginChunk(0x10100);
+		m_writer.beginChunk(0x10101);
+		m_writer.writeName("alDefault.fx");
+		m_writer.endChunk();
+		m_writer.endChunk();
 
 		//Write sub-mesh data
-		write(0x10000);
-		auto subMeshPos = static_cast<uint32_t>(m_oStream.tellp());
-		write(uint32_t());
+		m_writer.beginChunk(0x10000);
 
 		//Mesh information
-		write(0x10001);
-		write(128);
-		write(mesh.getNumVerts());
-		write(mesh.getNumFaces());
-		byte emptySpace2[120];
-		std::fill(&emptySpace2[0], &emptySpace2[119], 0);
-		write(emptySpace2);
+		m_writer.beginChunk(0x10001);
+		m_writer.write(mesh.getNumVerts());
+		m_writer.write(mesh.getNumFaces());
+		m_writer.fillBytes(120);
+		m_writer.endChunk();
+
 		//TODO Vertex format Find out what the fuck that is supposed to be TODO
-		write(0x10002);
-		write(13);
-		write("alD3dVertNU2", 12);
-		write(short(0),1);
-		//Index buffer
-		write(0x10004);
-		write(mesh.getNumFaces()*6);
-		for(int j=0;j<mesh.getNumFaces();++j)
-		{
-			auto &face = mesh.faces[j];
-			write(static_cast<short>(face.getVert(0)));
-			write(static_cast<short>(face.getVert(1)));
-			write(static_cast<short>(face.getVert(2)));
-		}
+		m_writer.beginChunk(0x10002);
+		m_writer.write("alD3dVertNU2", 12);
+		m_writer.endChunk();
+
 		//Vertex buffer
-		write(0x10007);
-		write(mesh.getNumVerts()*144);
+		m_writer.beginChunk(0x10007);
 		for(int j=0;j<mesh.getNumVerts();++j)
 		{
 			auto &vert = mesh.verts[j];
-			write(vert.x);
-			write(vert.y);
-			write(vert.z);
+			m_writer.write(vert.x);
+			m_writer.write(vert.y);
+			m_writer.write(vert.z);
 
-			/*auto &normal = mesh.;
-			write(normal.x);
-			write(normal.y);
-			write(normal.z);*/
+			auto &normal = mesh.getNormal(j);
+			m_writer.write(normal.x);
+			m_writer.write(normal.y);
+			m_writer.write(normal.z);
 
 			//Texture coordinates
 			//TODO test this. I'm literally guessing half of this shit TODO
 			auto &texCoords = mesh.getTVert(j);
-			write(texCoords.x);
-			write(0.f);
-			write(texCoords.y);
-			write(0.f);
-			write(texCoords.z);
-			write(0.f);
-			write(1.f);
-			write(0.f);
+			m_writer.write(texCoords.x);
+			m_writer.write(0.f);
+			m_writer.write(texCoords.y);
+			m_writer.write(0.f);
+			m_writer.write(texCoords.z);
+			m_writer.write(0.f);
+			m_writer.write(1.f);
+			m_writer.write(0.f);
 			//REGION Begin march of the useless data fields
 			//TODO tangent and binormal. Check if this works. all 0 in example. why. TODO
-			write(0);
-			write(0);
-			write(0);
-			write(0);
-			write(0);
-			write(0);
+			m_writer.writeValues(0.f,6);
 			//Color. What. The. Fuck. Is. Wrong. With. This. Lazy. Format.
 			//Plus it's all 1 in the example
-			write(1.f);
-			write(1.f);
-			write(1.f);
-			write(1.f);
+			m_writer.writeValues(1.f,4);
 			//Unused. as a float4. Yeah I can't even anymore. In example it's all 1 for an used vertex.
-			write(1.f);
-			write(1.f);
-			write(1.f);
-			write(1.f);
+			m_writer.writeValues(1.f,4);
 			//TODO Bone Indices. Use in animation TODO
-			write(0);
-			write(0);
-			write(0);
-			write(0);
+			m_writer.writeValues(0,4);
 			//Bone Weight. 1,0,0,0 expected, yet another useless field. Why do half of these even exist
-			write(0);
-			write(0);
-			write(0);
-			write(0);
+			m_writer.write(1.f);
+			m_writer.writeValues(0.f,3);
 		}
-		
-		auto length = static_cast<uint32_t>(m_oStream.tellp())-subMeshPos - 4 + (1<<31);
-		writeAt(subMeshPos, length);
+		m_writer.endChunk();
 
-		writeAt(meshPos, static_cast<uint32_t>(m_oStream.tellp())-meshPos - 4 + (1<<31));
+		//Index buffer
+		m_writer.beginChunk(0x10004);
+		for(int j=0;j<mesh.getNumFaces();++j)
+		{
+			auto &face = mesh.faces[j];
+			m_writer.write(static_cast<short>(face.getVert(0)));
+			m_writer.write(static_cast<short>(face.getVert(1)));
+			m_writer.write(static_cast<short>(face.getVert(2)));
+		}
+		m_writer.endChunk();
+
+		//0x10000
+		m_writer.endChunk();
+		//0x400
+		m_writer.endChunk();
 
 		m_meshIDs.push_back(std::make_pair(meshID,i));
 		++meshID;
@@ -352,33 +269,30 @@ bool Exporter::exportLight()
 
 bool Exporter::exportConnections()
 {
-	
-	write(0x600);
+	m_writer.beginChunk(0x600);
 
-	auto connPos = m_oStream.tellp();
-	write(uint32_t());
-	write(0x601);
-	write(static_cast<uint32_t>(12));
-	write(static_cast<byte>(0x1),1);
-	write(static_cast<byte>(4),1);
-	write(static_cast<uint32_t>(m_meshIDs.size()));
-	write(static_cast<byte>(0x4),1);
-	write(static_cast<byte>(4),1);
-	write(static_cast<uint32_t>(0));
+	m_writer.beginChunk(0x601);
+	m_writer.beginMiniChunk(1);
+	m_writer.write(static_cast<uint32_t>(m_meshIDs.size()));
+	m_writer.endMiniChunk();
+	m_writer.beginMiniChunk(4);
+	m_writer.write(static_cast<uint32_t>(0));
+	m_writer.endMiniChunk();
+	m_writer.endChunk();
 	
 	for(auto pair: m_meshIDs)
 	{
-		write(0x602);
-		write(12);
-		write(static_cast<byte>(0x2),1);
-		write(static_cast<byte>(4),1);
-		write(pair.first);
-		write(static_cast<byte>(0x3),1);
-		write(static_cast<byte>(4),1);
-		write(pair.second);
+		m_writer.beginChunk(0x602);
+		m_writer.beginMiniChunk(2);
+		m_writer.write(pair.first);
+		m_writer.endMiniChunk();
+		
+		m_writer.beginMiniChunk(3);
+		m_writer.write(pair.second);
+		m_writer.endMiniChunk();
+		m_writer.endChunk();
 	}
-	
-	writeAt(connPos, static_cast<uint32_t>(m_oStream.tellp()-connPos) - 4 + (1<<31));
-	
+
+	m_writer.endChunk();
 	return true;
 }
