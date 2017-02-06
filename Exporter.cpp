@@ -6,6 +6,7 @@
 #include <lslights.h>
 #include <Esent.h>
 #include <modstack.h>
+#include "Utility.h"
 
 Exporter::Exporter(const TCHAR* name, ExpInterface* ei, Interface* ip, BOOL suppressPrompts, DWORD options)
 	: m_name(name)
@@ -83,10 +84,10 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 		}
 		else
 		{
-			auto nodeTM = node->GetNodeTM(0);
-			auto parentTM = node->GetParentNode()->GetNodeTM(0);
-			//m_writer.writeMatrix(nodeTM*Inverse(parentTM));
-			m_writer.writeMatrix(node->GetObjTMBeforeWSM(0));
+			auto nodeTM = node->GetObjTMAfterWSM(0);
+			auto parentTM = node->GetParentNode()->GetObjTMAfterWSM(0);
+			m_writer.writeMatrix(nodeTM*Inverse(parentTM));
+			//m_writer.writeMatrix(node->GetObjTMBeforeWSM(0));
 		}
 		m_writer.endChunk();
 		m_writer.endChunk();
@@ -185,10 +186,24 @@ bool Exporter::exportMesh()
 
 		//Write sub-mesh data
 		m_writer.beginChunk(0x10000);
+		
+		//Please note that petro saves vertex normals per face in the vertices, which means we need to duplicate vertices if they're in multiple faces
+		std::vector<Point3> normals;
+		Utility::ComputeFaceNormals(&mesh, normals);
+
+		//Rough algorithm: 
+		//>Get vertices with multiple faces (adjList)
+		//>Check for same normals
+		//>Make table that projects file vertex id -> original vertex id in mesh + face id of face that fills that vertex
+		//>Check for each face for each vertex where the next free+same vertex is
+		std::vector<std::vector<int>> adjList;
+		Utility::generateAdjacencyList(&mesh, adjList);
+		std::vector<VertFaceRelation> relations;
+		Utility::generateRelationList(&mesh, normals, adjList, relations);
 
 		//Mesh information
 		m_writer.beginChunk(0x10001);
-		m_writer.write(mesh.getNumVerts());
+		m_writer.write(static_cast<uint32_t>(relations.size()));
 		m_writer.write(mesh.getNumFaces());
 		m_writer.fillBytes(120);
 		m_writer.endChunk();
@@ -199,22 +214,30 @@ bool Exporter::exportMesh()
 		m_writer.endChunk();
 
 		//Vertex buffer
-		m_writer.beginChunk(0x10007);
-		for(int j=0;j<mesh.getNumVerts();++j)
+
+		//TODO look into different normal exception handling to allow more vertices TODO
+		if(relations.size() > USHRT_MAX)
 		{
-			auto &vert = mesh.verts[j];
+			return false;
+		}
+		
+
+		m_writer.beginChunk(0x10007);
+
+		auto vertPos = m_writer.tellp();
+		for(int j=0;j<relations.size();++j)
+		{
+			auto &vert = mesh.verts[relations[j].orgID];
 			m_writer.write(vert.x);
 			m_writer.write(vert.y);
 			m_writer.write(vert.z);
 
-			auto &normal = mesh.getNormal(j);
-			m_writer.write(normal.x);
-			m_writer.write(normal.y);
-			m_writer.write(normal.z);
+			//Placeholder for normals
+			m_writer.writeValues(0.f,3);
 
 			//Texture coordinates
 			//TODO test this. I'm literally guessing half of this shit TODO
-			auto &texCoords = mesh.getTVert(j);
+			auto &texCoords = mesh.getTVert(relations[j].orgID);
 			m_writer.write(texCoords.x);
 			m_writer.write(0.f);
 			m_writer.write(texCoords.y);
@@ -229,13 +252,13 @@ bool Exporter::exportMesh()
 			//Color. What. The. Fuck. Is. Wrong. With. This. Lazy. Format.
 			//Plus it's all 1 in the example
 			m_writer.writeValues(1.f,4);
-			//Unused. as a float4. Yeah I can't even anymore. In example it's all 1 for an used vertex.
+			//Unused. as a float4. Yeah I can't even anymore, format of 4 is ignored with vert/norm anyway. Also, in example it's all 1 for an used vertex.
 			m_writer.writeValues(1.f,4);
 			//TODO Bone Indices. Use in animation TODO
 			m_writer.writeValues(0,4);
 			//Bone Weight. 1,0,0,0 expected, yet another useless field. Why do half of these even exist
 			m_writer.write(1.f);
-			m_writer.writeValues(0.f,3);
+			m_writer.writeValues(0.f,3);	
 		}
 		m_writer.endChunk();
 
@@ -244,9 +267,30 @@ bool Exporter::exportMesh()
 		for(int j=0;j<mesh.getNumFaces();++j)
 		{
 			auto &face = mesh.faces[j];
-			m_writer.write(static_cast<short>(face.getVert(0)));
-			m_writer.write(static_cast<short>(face.getVert(1)));
-			m_writer.write(static_cast<short>(face.getVert(2)));
+			for(int k=0;k<3;++k)
+			{
+				int idx = 0;
+				for (int m = face.getVert(k); m < relations.size(); ++m)
+				{
+					if(face.getVert(k) == relations[m].orgID)
+					{
+						idx=m;
+						break;
+					}
+				}
+				while(relations[idx].faceID != -1 && !normals[relations[idx].faceID].Equals(normals[j]))
+				{
+					++idx;
+				}
+				if(relations[idx].faceID == -1)
+				{
+					relations[idx].faceID = j;
+					m_writer.writeAt(vertPos + idx*144 + 12, normals[j].x);
+					m_writer.writeAt(vertPos + idx*144 + 16, normals[j].y);
+					m_writer.writeAt(vertPos + idx*144 + 20, normals[j].z);
+				}
+				m_writer.write(static_cast<unsigned short>(idx));
+			}
 		}
 		m_writer.endChunk();
 

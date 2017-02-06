@@ -18,6 +18,7 @@ public:
 
 protected:
 	void parseSkeleton(INode* node, uint32_t parent);
+	
 
 	bool exportSkeleton();
 	bool exportMesh();

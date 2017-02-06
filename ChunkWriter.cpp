@@ -68,16 +68,6 @@ void ChunkWriter::writeName(const wchar_t* str)
 
 void ChunkWriter::writeMatrix(const Matrix3& matrix)
 {	
-	Point3 row;
-	/*
-	for (int i = 0; i < 4; ++i)
-	{
-		row = matrix.GetRow(i);
-		write(row.x);
-		write(row.y);
-		write(row.z);
-		write(0.f);
-	}*/
 	Point4 column;
 	for(int i=0;i<3;++i)
 	{
