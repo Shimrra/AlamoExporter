@@ -68,6 +68,10 @@ void ChunkWriter::writeName(const wchar_t* str)
 
 void ChunkWriter::writeMatrix(const Matrix3& matrix)
 {	
+	std::filebuf shit;
+	shit.open("G:/matrix.txt", std::ios::out | std::ios::app);
+	std::ostream test(&shit);
+
 	Point4 column;
 	for(int i=0;i<3;++i)
 	{
@@ -76,7 +80,14 @@ void ChunkWriter::writeMatrix(const Matrix3& matrix)
 		write(column.y);
 		write(column.z);
 		write(column.w);
+		/*m_oStream << column.x << ";";
+		m_oStream << column.y << ";";
+		m_oStream << column.z << ";";
+		m_oStream << column.w << ";";*/
 	}
+	test << std::endl;
+	shit.close();
+
 }
 
 void ChunkWriter::fillBytes(int count)

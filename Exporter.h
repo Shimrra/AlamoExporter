@@ -17,7 +17,7 @@ public:
 	bool exportALO();
 
 protected:
-	void parseSkeleton(INode* node, uint32_t parent);
+	void parseSkeleton(INode* node, Matrix3 parentTM, uint32_t parent);
 	
 
 	bool exportSkeleton();

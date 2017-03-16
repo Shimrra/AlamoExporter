@@ -26,9 +26,10 @@ bool Exporter::exportALO()
 	return exportSkeleton() && exportMesh() && exportLight() && exportConnections() && m_writer.isEmpty();
 }
 
-void Exporter::parseSkeleton(INode* node, uint32_t parent)
+void Exporter::parseSkeleton(INode* node, Matrix3 parentTM, uint32_t parent)
 {
 	auto nodeObject = node->GetObjectRef();
+	Matrix3 nodeTM = parentTM;
 	uint32_t newParentID = m_nodes.size();
 	if(nodeObject)
 	{
@@ -84,8 +85,16 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 		}
 		else
 		{
-			auto nodeTM = node->GetObjTMAfterWSM(0);
-			auto parentTM = node->GetParentNode()->GetObjTMAfterWSM(0);
+			nodeTM = IdentityTM();
+			Quat quat = node->GetObjOffsetRot();
+			PreRotateMatrix(nodeTM, quat);
+			//ScaleValue scaleValue = node->GetObjOffsetScale();
+			//ApplyScaling(nodeTM, scaleValue);
+			Point3 pos = node->GetObjOffsetPos();
+			nodeTM.Translate(pos);
+			//auto parentTM = node->GetParentNode()->GetNodeTM(0);
+			//auto localTM = nodeTM*Inverse(parentTM);
+			
 			m_writer.writeMatrix(nodeTM*Inverse(parentTM));
 			//m_writer.writeMatrix(node->GetObjTMBeforeWSM(0));
 		}
@@ -95,7 +104,7 @@ void Exporter::parseSkeleton(INode* node, uint32_t parent)
 
 	for (int i=0;i<node->NumberOfChildren();++i)
 	{
-		parseSkeleton(node->GetChildNode(i), newParentID);
+		parseSkeleton(node->GetChildNode(i), nodeTM, newParentID);
 	}
 
 }
@@ -112,7 +121,7 @@ bool Exporter::exportSkeleton()
 	m_writer.endChunk();
 
 	auto root = m_interface->GetRootNode();
-	parseSkeleton(root, 0xffffffff);
+	parseSkeleton(root, IdentityTM(), 0xffffffff);
 	m_writer.writeAt(boneCountPosition, static_cast<uint32_t>(m_nodes.size()));
 
 	m_writer.endChunk();
@@ -239,12 +248,12 @@ bool Exporter::exportMesh()
 			//TODO test this. I'm literally guessing half of this shit TODO
 			auto &texCoords = mesh.getTVert(relations[j].orgID);
 			m_writer.write(texCoords.x);
-			m_writer.write(0.f);
 			m_writer.write(texCoords.y);
-			m_writer.write(0.f);
+			m_writer.write(texCoords.x);
+			m_writer.write(texCoords.z);
+			m_writer.write(texCoords.y);
 			m_writer.write(texCoords.z);
 			m_writer.write(0.f);
-			m_writer.write(1.f);
 			m_writer.write(0.f);
 			//REGION Begin march of the useless data fields
 			//TODO tangent and binormal. Check if this works. all 0 in example. why. TODO
